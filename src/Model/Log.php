@@ -157,6 +157,23 @@ final class Log
         return $files;
     }
 
+    public static function getAllRawLogs(): array
+    {
+        $logDirectoryItems = self::getAllLogFiles();
+        $logFilePath = self::getLogFilePath();
+
+        $rawLogs = [];
+
+        foreach ($logDirectoryItems as $file) {
+            $filePath = $logFilePath . '/' . $file;
+            if (is_file($filePath) && pathinfo($filePath, PATHINFO_EXTENSION) === 'log') {
+                $rawLogs[$file] = file_get_contents($filePath);
+            }
+        }
+
+        return $rawLogs;
+    }
+
     private static function processLogFile(string $filePath, string $file): array
     {
         $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
