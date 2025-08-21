@@ -22,8 +22,8 @@ final class Log
         $logFilePath = self::getLogFilePath();
 
         foreach ($logDirectoryItems as $file) {
-            $filePath = $logFilePath.'/'.$file;
-            if (is_file($filePath) && pathinfo((string) $file, PATHINFO_EXTENSION) === 'log') {
+            $filePath = realpath($logFilePath . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $file), DIRECTORY_SEPARATOR));
+            if (is_file($filePath) && pathinfo($filePath, PATHINFO_EXTENSION) === 'log') {
                 file_put_contents($filePath, '');
             }
         }
@@ -37,21 +37,21 @@ final class Log
         $logFilePath = self::getLogFilePath();
 
         foreach ($logDirectoryItems as $file) {
-            $filePath = $logFilePath.'/'.$file;
-            if (! is_file($filePath)) {
-                continue;
-            }
-            if (pathinfo((string) $file, PATHINFO_EXTENSION) !== 'log') {
+            $filePath = realpath($logFilePath . DIRECTORY_SEPARATOR . ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $file), DIRECTORY_SEPARATOR));
+            if (!is_file($filePath)) {
                 continue;
             }
 
-            $logs = array_merge($logs, self::processLogFile($filePath, $file));
+            if (pathinfo($filePath, PATHINFO_EXTENSION) !== 'log') {
+                continue;
+            }
+
+            $logs = array_merge($logs, self::processLogFile($filePath, basename($file)));
         }
 
         usort($logs, function (array $a, array $b): int {
             $dateA = Carbon::parse($a['date']);
             $dateB = Carbon::parse($b['date']);
-
             return $dateB->timestamp <=> $dateA->timestamp;
         });
 
@@ -86,33 +86,36 @@ final class Log
 
     public static function getAllLogFiles(): array
     {
-        $logFilePath = storage_path('logs');
-        if (! is_dir($logFilePath)) {
+        $logFilePath = self::getLogFilePath();
+
+        if (!is_dir($logFilePath)) {
             return [];
         }
 
         $files = self::getNestedFiles($logFilePath);
 
-        return array_map(fn ($file) => str_replace(storage_path(), '', $file), $files);
+        return array_map(function ($file) use ($logFilePath) {
+            $relative = str_replace($logFilePath, '', $file);
+            return str_replace(['\\', '/'], DIRECTORY_SEPARATOR, ltrim($relative, DIRECTORY_SEPARATOR));
+        }, $files);
     }
 
     public static function getFilesForFilter(): array
     {
-        $logFilePath = self::getAllLogFiles();
+        $allFiles = self::getAllLogFiles();
 
-        return Collection::wrap($logFilePath)
+        return Collection::wrap($allFiles)
             ->mapWithKeys(function (string $file): array {
-                $filePath = str_replace(storage_path(), '', $file);
-
-                return [$filePath => $filePath];
+                $normalized = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, $file);
+                return [$normalized => $normalized];
             })
             ->reduce(function ($carry, $item) {
-                if (str_contains($item, '/')) {
-                    $parts = explode('/', $item);
+                if (str_contains($item, DIRECTORY_SEPARATOR)) {
+                    $parts = explode(DIRECTORY_SEPARATOR, $item);
                     $lastPart = array_pop($parts);
-                    $directory = implode('/', $parts);
+                    $directory = implode(DIRECTORY_SEPARATOR, $parts);
 
-                    if (! isset($carry[$directory])) {
+                    if (!isset($carry[$directory])) {
                         $carry[$directory] = [];
                     }
 
@@ -140,23 +143,14 @@ final class Log
         $items = scandir($directory);
 
         foreach ($items as $item) {
-            if ($item === '.') {
-                continue;
-            }
+            if ($item === '.' || $item === '..') continue;
 
-            if ($item === '..') {
-                continue;
-            }
-
-            $path = $directory.DIRECTORY_SEPARATOR.$item;
-            $pathAfterRemovingStoragePath = str_replace(storage_path(), '', $path);
-            $pathAfterRemovingFileName = str_replace(basename($path), '', $pathAfterRemovingStoragePath);
-            $pathWithoutLogsPrefix = str_replace('/logs/', '', $pathAfterRemovingFileName);
+            $path = $directory . DIRECTORY_SEPARATOR . $item;
 
             if (is_dir($path)) {
                 $files = array_merge($files, self::getNestedFiles($path));
             } elseif (is_file($path) && pathinfo($path, PATHINFO_EXTENSION) === 'log') {
-                $files[] = $pathWithoutLogsPrefix.basename($path);
+                $files[] = $path;
             }
         }
 
@@ -195,7 +189,7 @@ final class Log
 
         preg_match('/\[(?<date>[\d\-:\s]+)\]\s(?<env>\w+)\.(?<level>\w+):\s(?<message>.*)/s', $entry, $matches);
 
-        if (! isset($matches['level']) || ! isset($matches['message'])) {
+        if (!isset($matches['level']) || !isset($matches['message'])) {
             return null;
         }
 
@@ -238,7 +232,7 @@ final class Log
 
                     return $next($emptyOrParts);
                 },
-                fn ($emptyOrParts, $next) => $next(explode("\n", (string) $emptyOrParts)),
+                fn ($emptyOrParts, $next) => $next(explode("\n", (string)$emptyOrParts)),
                 fn ($stackTraceArray, $next) => $next(array_slice($stackTraceArray, 1, -1)),
                 fn ($slicedTrace, $next) => $next(array_map(fn ($item): array => ['trace' => $item], $slicedTrace)),
             ])
